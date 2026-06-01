@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import subprocess
@@ -72,7 +73,6 @@ def format_output(text: str, fmt: str) -> str:
         return "\n".join(result)
 
     if fmt == "json":
-        import json
         words = [{"word": w, "index": i}
                  for i, w in enumerate(text.split()) if w.strip()]
         return json.dumps({"text": text.strip(), "words": words}, indent=2)
@@ -185,6 +185,25 @@ def fetch_via_ytcom(video_id: str) -> str | None:
 OPENSEARCH_API_KEY = os.environ.get("OPENSUBTITLES_API_KEY", "")
 USER_AGENT = "SubtitleHub v1.0"
 
+# HTTP opener that follows redirects
+_opener = None
+
+
+def _get_opener():
+    global _opener
+    if _opener is None:
+        _opener = urllib.request.build_opener(
+            urllib.request.HTTPRedirectHandler(),
+            urllib.request.HTTPSHandler(),
+        )
+    return _opener
+
+
+def _fetch_json(url, headers=None, data=None, method=None, timeout=15):
+    req = urllib.request.Request(url, headers=headers or {}, data=data, method=method)
+    resp = _get_opener().open(req, timeout=timeout)
+    return json.loads(resp.read().decode())
+
 
 @app.get("/opensubtitles")
 def opensubtitles_proxy(
@@ -197,19 +216,11 @@ def opensubtitles_proxy(
     if not OPENSEARCH_API_KEY:
         return {"error": "OpenSubtitles API key not configured on server"}
 
-    import json as j
-    import urllib.request
-
     search_query = imdb_id if imdb_id else query
     search_url = f"https://api.opensubtitles.com/api/v1/subtitles?query={urllib.parse.quote(search_query)}&languages={language}"
-
-    req = urllib.request.Request(search_url, headers={
-        "Api-Key": OPENSEARCH_API_KEY,
-        "User-Agent": USER_AGENT,
-    })
+    headers = {"Api-Key": OPENSEARCH_API_KEY, "User-Agent": USER_AGENT}
     try:
-        resp = urllib.request.urlopen(req, timeout=15)
-        data = j.loads(resp.read().decode())
+        data = _fetch_json(search_url, headers=headers)
     except Exception as e:
         return {"error": f"OpenSubtitles search failed: {e}"}
 
@@ -226,21 +237,20 @@ def opensubtitles_proxy(
     if not file_id:
         return {"error": "No file ID"}
 
-    # Download the subtitle file
-    body = j.dumps({"file_id": file_id}).encode()
-    dl_req = urllib.request.Request(
-        "https://api.opensubtitles.com/api/v1/download",
-        data=body,
-        headers={
-            "Api-Key": OPENSEARCH_API_KEY,
-            "User-Agent": USER_AGENT,
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
+    dl_body = json.dumps({"file_id": file_id}).encode()
+    dl_headers = {
+        "Api-Key": OPENSEARCH_API_KEY,
+        "User-Agent": USER_AGENT,
+        "Content-Type": "application/json",
+    }
     try:
-        dl_resp = urllib.request.urlopen(dl_req, timeout=15)
-        dl_data = j.loads(dl_resp.read().decode())
+        dl_data = _fetch_json(
+            "https://api.opensubtitles.com/api/v1/download",
+            headers=dl_headers,
+            data=dl_body,
+            method="POST",
+            timeout=15,
+        )
     except Exception as e:
         return {"error": f"OpenSubtitles download failed: {e}"}
 
@@ -248,9 +258,9 @@ def opensubtitles_proxy(
     if not link:
         return {"error": "No download link returned"}
 
-    file_req = urllib.request.Request(link, headers={"User-Agent": USER_AGENT})
     try:
-        file_resp = urllib.request.urlopen(file_req, timeout=30)
+        file_req = urllib.request.Request(link, headers={"User-Agent": USER_AGENT})
+        file_resp = _get_opener().open(file_req, timeout=30)
         file_text = file_resp.read().decode("utf-8", errors="replace")
     except Exception as e:
         return {"error": f"Subtitle file fetch failed: {e}"}

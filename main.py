@@ -217,7 +217,12 @@ def opensubtitles_proxy(
 
     search_query = imdb_id if imdb_id else query
     search_url = f"https://api.opensubtitles.com/api/v1/subtitles?query={urllib.parse.quote(search_query)}&languages={language}"
-    headers = {"Api-Key": OPENSEARCH_API_KEY, "User-Agent": USER_AGENT}
+    headers = {
+        "Api-Key": OPENSEARCH_API_KEY,
+        "User-Agent": USER_AGENT,
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.5",
+    }
     try:
         data = _fetch_json(search_url, headers=headers)
     except Exception as e:
@@ -241,6 +246,8 @@ def opensubtitles_proxy(
         "Api-Key": OPENSEARCH_API_KEY,
         "User-Agent": USER_AGENT,
         "Content-Type": "application/json",
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.5",
     }
     try:
         dl_data = _fetch_json(
@@ -258,7 +265,11 @@ def opensubtitles_proxy(
         return {"error": "No download link returned"}
 
     try:
-        file_req = urllib.request.Request(link, headers={"User-Agent": USER_AGENT})
+        file_req = urllib.request.Request(link, headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.5",
+        })
         file_resp = _get_opener().open(file_req, timeout=30)
         file_text = file_resp.read().decode("utf-8", errors="replace")
     except Exception as e:

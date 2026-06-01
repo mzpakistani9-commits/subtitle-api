@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.parse
+import urllib.request
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
@@ -166,13 +167,11 @@ def fetch_via_ytdlp(video_url: str, lang: str) -> str | None:
 
 def fetch_via_ytcom(video_id: str) -> str | None:
     """Fetch via youtubetranscript.com (free third-party API)."""
-    import urllib.request
-    import json as j
     url = f"https://youtubetranscript.com/?v={video_id}&format=json"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         resp = urllib.request.urlopen(req, timeout=15)
-        data = j.loads(resp.read().decode())
+        data = json.loads(resp.read().decode())
         if isinstance(data, list):
             return "\n".join(s["text"] for s in data if "text" in s)
     except Exception:

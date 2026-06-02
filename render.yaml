@@ -8,4 +8,4 @@ services:
       - key: PYTHON_VERSION
         value: 3.12.0
       - key: OPENSUBTITLES_API_KEY
-        value: hkgfzHWPUOmjGAYK3PAH4g2MPROzYQwI
+        value: hnOPIvAwIxLRSAps1uYdhNdFSTxpaWtk

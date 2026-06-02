@@ -215,7 +215,7 @@ def fetch_via_ytcom(video_id: str) -> str | None:
     return None
 
 
-# ── OpenSubtitles Proxy (key lives server-side only) ────
+# ── OpenSubtitles Proxy (key + user JWT) ─────────────────
 
 OPENSEARCH_API_KEY = os.environ.get("OPENSUBTITLES_API_KEY", "")
 USER_AGENT = "SubtitleHub v1.0"
@@ -240,6 +240,46 @@ def _fetch_json(url, headers=None, data=None, method=None, timeout=15):
     return json.loads(resp.read().decode())
 
 
+def _os_headers(token: str = "") -> dict:
+    """Return headers for OpenSubtitles API. If token given, use Bearer auth."""
+    h = {
+        "User-Agent": USER_AGENT,
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.5",
+    }
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+    else:
+        h["Api-Key"] = OPENSEARCH_API_KEY
+    return h
+
+
+@app.post("/opensubtitles/login")
+def opensubtitles_login(body: dict):
+    """Login to OpenSubtitles with user credentials, return JWT token."""
+    username = body.get("username", "").strip()
+    password = body.get("password", "").strip()
+    if not username or not password:
+        return {"error": "Username and password are required"}
+    try:
+        payload = json.dumps({"username": username, "password": password}).encode()
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        resp_data = _fetch_json(
+            "https://api.opensubtitles.com/api/v1/login",
+            headers=headers, data=payload, method="POST", timeout=15,
+        )
+        token = resp_data.get("token")
+        if token:
+            return {"ok": True, "token": token, "user": resp_data.get("user", {})}
+        return {"error": resp_data.get("message", "Login failed")}
+    except Exception as e:
+        return {"error": f"OpenSubtitles login failed: {e}"}
+
+
 @app.get("/opensubtitles")
 def opensubtitles_proxy(
     request: Request,
@@ -247,20 +287,22 @@ def opensubtitles_proxy(
     imdb_id: str = Query(""),
     language: str = Query("en"),
     format: str = Query("srt"),
+    token: str = Query(""),
 ):
-    """Proxy for OpenSubtitles API — the API key stays on the server."""
+    """Proxy for OpenSubtitles API.
+    - If token provided, uses user's JWT (20 downloads/day).
+    - Otherwise uses server API key (5 downloads/day fallback).
+    """
     rate_limited(request)
-    if not OPENSEARCH_API_KEY:
+
+    if not token and not OPENSEARCH_API_KEY:
         return {"error": "OpenSubtitles API key not configured on server"}
+    if not token and not OPENSEARCH_API_KEY:
+        return {"error": "Login required — no server API key configured"}
 
     search_query = imdb_id if imdb_id else query
     search_url = f"https://api.opensubtitles.com/api/v1/subtitles?query={urllib.parse.quote(search_query)}&languages={language}"
-    headers = {
-        "Api-Key": OPENSEARCH_API_KEY,
-        "User-Agent": USER_AGENT,
-        "Accept": "*/*",
-        "Accept-Language": "en-US,en;q=0.5",
-    }
+    headers = _os_headers(token)
     try:
         data = _fetch_json(search_url, headers=headers)
     except Exception as e:
@@ -280,13 +322,8 @@ def opensubtitles_proxy(
         return {"error": "No file ID"}
 
     dl_body = json.dumps({"file_id": file_id}).encode()
-    dl_headers = {
-        "Api-Key": OPENSEARCH_API_KEY,
-        "User-Agent": USER_AGENT,
-        "Content-Type": "application/json",
-        "Accept": "*/*",
-        "Accept-Language": "en-US,en;q=0.5",
-    }
+    dl_headers = _os_headers(token)
+    dl_headers["Content-Type"] = "application/json"
     try:
         dl_data = _fetch_json(
             "https://api.opensubtitles.com/api/v1/download",

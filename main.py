@@ -4,12 +4,39 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 import urllib.request
-from fastapi import FastAPI, Query, HTTPException
+from collections import defaultdict
+from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
+
+# ── Rate Limiter ──────────────────────────────────────────
+
+RATE_LIMIT_REQUESTS = 30
+RATE_LIMIT_WINDOW = 60  # seconds
+_rate_store: dict[str, list[float]] = defaultdict(list)
+
+
+def rate_limit(ip: str) -> bool:
+    now = time.time()
+    window_start = now - RATE_LIMIT_WINDOW
+    timestamps = _rate_store[ip]
+    # prune old entries
+    _rate_store[ip] = [t for t in timestamps if t > window_start]
+    if len(_rate_store[ip]) >= RATE_LIMIT_REQUESTS:
+        return False
+    _rate_store[ip].append(now)
+    return True
+
+
+def rate_limited(request: Request):
+    ip = request.client.host if request.client else "unknown"
+    if not rate_limit(ip):
+        raise HTTPException(status_code=429, detail="Too many requests. Slow down.")
+
 
 app = FastAPI(title="Subtitle Downloader API")
 
@@ -215,12 +242,14 @@ def _fetch_json(url, headers=None, data=None, method=None, timeout=15):
 
 @app.get("/opensubtitles")
 def opensubtitles_proxy(
+    request: Request,
     query: str = Query(...),
     imdb_id: str = Query(""),
     language: str = Query("en"),
     format: str = Query("srt"),
 ):
     """Proxy for OpenSubtitles API — the API key stays on the server."""
+    rate_limited(request)
     if not OPENSEARCH_API_KEY:
         return {"error": "OpenSubtitles API key not configured on server"}
 
@@ -317,7 +346,13 @@ def root():
 
 @app.get("/download")
 @app.post("/download")
-def download(url: str = Query(...), format: str = Query("txt"), lang: str = Query("en")):
+def download(
+    request: Request,
+    url: str = Query(...),
+    format: str = Query("txt"),
+    lang: str = Query("en"),
+):
+    rate_limited(request)
     video_id = extract_video_id(url)
     if not video_id:
         return {"error": "Invalid YouTube URL"}
@@ -346,7 +381,13 @@ def download(url: str = Query(...), format: str = Query("txt"), lang: str = Quer
 
 
 @app.get("/download/raw")
-def download_raw(url: str = Query(...), format: str = Query("txt"), lang: str = Query("en")):
+def download_raw(
+    request: Request,
+    url: str = Query(...),
+    format: str = Query("txt"),
+    lang: str = Query("en"),
+):
+    rate_limited(request)
     result = download(url, format, lang)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
@@ -355,7 +396,13 @@ def download_raw(url: str = Query(...), format: str = Query("txt"), lang: str = 
 
 
 @app.get("/playlist")
-def playlist(url: str = Query(...), format: str = Query("txt"), lang: str = Query("en")):
+def playlist(
+    request: Request,
+    url: str = Query(...),
+    format: str = Query("txt"),
+    lang: str = Query("en"),
+):
+    rate_limited(request)
     playlist_id = None
     m = re.search(r"[&?]list=([\w-]+)", url)
     if m:

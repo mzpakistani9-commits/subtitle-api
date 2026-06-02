@@ -7,3 +7,5 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
+      - key: OPENSUBTITLES_API_KEY
+        value: S7GvQjLI9QNvqmUDlg4qhy3P2Mq8pHTD

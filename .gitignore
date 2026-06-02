@@ -1,0 +1,7 @@
+*.jpg
+*.png
+*.bak
+SubtitleApp/
+backend-deploy/
+opensubtitles_api_key.txt
+subtitle-backend-deploy.zip

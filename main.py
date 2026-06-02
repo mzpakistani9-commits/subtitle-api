@@ -53,21 +53,19 @@ def extract_video_id(url: str) -> str | None:
 
 
 def format_output(text: str, fmt: str) -> str:
-    """Format plain text into requested output format."""
     if fmt == "txt":
         return text.strip()
 
-    lines = text.strip().split("\n")
+    lines = [l for l in text.strip().split("\n") if l.strip()]
     if fmt in ("srt", "vtt"):
         result = []
-        idx = 0
         for i, line in enumerate(lines):
-            if line.strip():
-                idx += 1
-                result.append(str(idx))
-                result.append(f"00:00:{i:02d},000 --> 00:00:{i+3:02d},000")
-                result.append(line.strip())
-                result.append("")
+            start_s = i * 3
+            end_s = start_s + 3
+            result.append(str(i + 1))
+            result.append(f"{start_s // 3600:02d}:{(start_s % 3600) // 60:02d}:{start_s % 60:02d},000 --> {end_s // 3600:02d}:{(end_s % 3600) // 60:02d}:{end_s % 60:02d},000")
+            result.append(line.strip())
+            result.append("")
         if fmt == "vtt":
             result.insert(0, "WEBVTT")
             result.insert(1, "")
@@ -83,8 +81,20 @@ def format_output(text: str, fmt: str) -> str:
 
 # ── Primary: youtube-transcript-api ─────────────────────
 
+def _extract_transcript_text(transcript) -> str | None:
+    segments = transcript if isinstance(transcript, list) else list(transcript)
+    texts = []
+    for s in segments:
+        if isinstance(s, dict):
+            texts.append(s.get("text", ""))
+        elif isinstance(s, str):
+            texts.append(s)
+        elif hasattr(s, "text"):
+            texts.append(s.text)
+    return "\n".join(texts) if texts else None
+
+
 def fetch_via_transcript_api(video_id: str, lang: str = "en") -> str | None:
-    """Fetch subtitles using youtube-transcript-api (no auth needed)."""
     try:
         from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
     except ImportError:
@@ -97,30 +107,21 @@ def fetch_via_transcript_api(video_id: str, lang: str = "en") -> str | None:
 
         try:
             transcript = transcript_list.find_transcript(langs).fetch()
-            segments = transcript if isinstance(transcript, list) else list(transcript)
-            texts = []
-            for s in segments:
-                if isinstance(s, dict):
-                    texts.append(s.get("text", ""))
-                elif isinstance(s, str):
-                    texts.append(s)
-            if texts:
-                return "\n".join(texts)
+            result = _extract_transcript_text(transcript)
+            if result:
+                return result
         except (NoTranscriptFound, TranscriptsDisabled):
-            # Try any transcript
-            try:
-                transcript = transcript_list.find_transcript([]).fetch()
-                segments = transcript if isinstance(transcript, list) else list(transcript)
-                texts = []
-                for s in segments:
-                    if isinstance(s, dict):
-                        texts.append(s.get("text", ""))
-                    elif isinstance(s, str):
-                        texts.append(s)
-                if texts:
-                    return "\n".join(texts)
-            except Exception:
-                pass
+            pass
+
+        # Fallback: try any available transcript
+        try:
+            for t in transcript_list:
+                transcript = t.fetch()
+                result = _extract_transcript_text(transcript)
+                if result:
+                    return result
+        except Exception:
+            pass
     except TranscriptsDisabled:
         return None
     except Exception:
@@ -132,7 +133,6 @@ def fetch_via_transcript_api(video_id: str, lang: str = "en") -> str | None:
 # ── Fallback: yt-dlp with Android client ──────────────
 
 def fetch_via_ytdlp(video_url: str, lang: str) -> str | None:
-    """Fallback: download subtitles using yt-dlp (Android client to avoid bot detection)."""
     with tempfile.TemporaryDirectory() as tmp:
         outtmpl = os.path.join(tmp, "%(title)s.%(ext)s")
         cmd = [
@@ -155,12 +155,21 @@ def fetch_via_ytdlp(video_url: str, lang: str) -> str | None:
             vtt_text = f.read()
 
         lines = []
-        for line in vtt_text.split("\n"):
-            line = line.strip()
-            if not line or line == "WEBVTT" or "-->" in line or line.isdigit():
+        for entry in re.split(r"\n\n+", vtt_text):
+            entry = entry.strip()
+            if not entry or entry == "WEBVTT":
                 continue
-            lines.append(re.sub(r"<[^>]+>", "", line).strip())
-        return "\n".join(l for l in lines if l)
+            text_parts = []
+            for part in entry.split("\n"):
+                part = part.strip()
+                if not part or "-->" in part or part.startswith("Kind:") or part.startswith("Language:"):
+                    continue
+                part = re.sub(r"<[^>]+>", "", part).strip()
+                if part:
+                    text_parts.append(part)
+            if text_parts:
+                lines.append(" ".join(text_parts))
+        return "\n".join(lines) if lines else None
 
 
 # ── Backup: youtubetranscript.com API ───────────────────
@@ -278,10 +287,15 @@ def opensubtitles_proxy(
     if not file_text.strip():
         return {"error": "Empty subtitle file"}
 
-    word_count = len(file_text.split())
+    clean_text = re.sub(r"\d+\s*\n\d{2}:\d{2}:\d{2}[.,]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[.,]\d{3}\s*", "", file_text)
+    clean_text = re.sub(r"<[^>]+>", "", clean_text).strip()
+    word_count = len([w for w in clean_text.split() if w.strip()])
+
+    output = format_output(clean_text, format) if format in ("txt", "srt", "vtt", "json") else clean_text
+
     return {
         "ok": True,
-        "text": file_text,
+        "text": output,
         "word_count": word_count,
         "language": language,
         "source": "opensubtitles",
@@ -314,8 +328,6 @@ def download(url: str = Query(...), format: str = Query("txt"), lang: str = Quer
         text = fetch_via_ytcom(video_id)
     if text is None:
         text = fetch_via_ytdlp(url, lang)
-    if text is None:
-        text = fetch_via_ytdlp(url, lang)
 
     if text is None:
         return {"error": "No subtitles found for this video. Try a different video or language."}
@@ -340,6 +352,62 @@ def download_raw(url: str = Query(...), format: str = Query("txt"), lang: str = 
         raise HTTPException(status_code=400, detail=result["error"])
     return PlainTextResponse(result["text"], media_type="text/plain; charset=utf-8",
                              headers={"Content-Disposition": f"attachment; filename=subtitles.{format}"})
+
+
+@app.get("/playlist")
+def playlist(url: str = Query(...), format: str = Query("txt"), lang: str = Query("en")):
+    playlist_id = None
+    m = re.search(r"[&?]list=([\w-]+)", url)
+    if m:
+        playlist_id = m.group(1)
+
+    if not playlist_id:
+        return {"error": "Could not extract playlist ID from URL"}
+
+    try:
+        playlist_url = f"https://www.youtube.com/playlist?list={playlist_id}"
+        req = urllib.request.Request(playlist_url, headers={"User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36"})
+        resp = urllib.request.urlopen(req, timeout=15)
+        html = resp.read().decode("utf-8", errors="replace")
+        video_ids = list(dict.fromkeys(re.findall(r"/watch\?v=([\w-]{11})", html)))
+    except Exception as e:
+        return {"error": f"Failed to fetch playlist: {e}"}
+
+    if not video_ids:
+        return {"error": "No videos found in playlist"}
+
+    limited = video_ids[:50]
+    results = []
+    success_count = 0
+    total_words = 0
+
+    for vid in limited:
+        vid_url = f"https://www.youtube.com/watch?v={vid}"
+        text = fetch_via_transcript_api(vid, lang)
+        if text is None:
+            text = fetch_via_ytcom(vid)
+        if text is None:
+            text = fetch_via_ytdlp(vid_url, lang)
+        if text:
+            success_count += 1
+            total_words += len(text.split())
+            results.append(f"=== Video {vid} ===\n{format_output(text, format)}")
+        else:
+            results.append(f"=== Video {vid} === [No subtitles]")
+
+    if success_count == 0:
+        return {"error": "No subtitles found in any playlist video"}
+
+    combined = "\n\n".join(results)
+    return {
+        "ok": True,
+        "text": f"Playlist: {success_count}/{len(limited)} videos successful\n\n{combined}",
+        "word_count": total_words,
+        "total_videos": len(limited),
+        "successful": success_count,
+        "language": lang,
+        "source": "playlist",
+    }
 
 
 if __name__ == "__main__":

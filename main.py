@@ -365,18 +365,32 @@ def playlist(url: str = Query(...), format: str = Query("txt"), lang: str = Quer
         return {"error": "Could not extract playlist ID from URL"}
 
     try:
-        playlist_url = f"https://www.youtube.com/playlist?list={playlist_id}"
-        req = urllib.request.Request(playlist_url, headers={"User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36"})
-        resp = urllib.request.urlopen(req, timeout=15)
-        html = resp.read().decode("utf-8", errors="replace")
-        video_ids = list(dict.fromkeys(re.findall(r"/watch\?v=([\w-]{11})", html)))
+        cmd = [
+            "yt-dlp", "--flat-playlist", "--dump-json",
+            "--no-warnings", "--ignore-errors",
+            f"https://www.youtube.com/playlist?list={playlist_id}",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0 and not result.stdout:
+            return {"error": f"yt-dlp failed: {result.stderr.strip()}"}
+
+        entries = []
+        for line in result.stdout.strip().split("\n"):
+            if line.strip():
+                try:
+                    entry = json.loads(line)
+                    vid = entry.get("id")
+                    if vid:
+                        entries.append(vid)
+                except json.JSONDecodeError:
+                    continue
+
+        if not entries:
+            return {"error": "No videos found in playlist"}
     except Exception as e:
         return {"error": f"Failed to fetch playlist: {e}"}
 
-    if not video_ids:
-        return {"error": "No videos found in playlist"}
-
-    limited = video_ids[:50]
+    limited = entries[:50]
     results = []
     success_count = 0
     total_words = 0

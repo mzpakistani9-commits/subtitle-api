@@ -241,16 +241,15 @@ def _fetch_json(url, headers=None, data=None, method=None, timeout=15):
 
 
 def _os_headers(token: str = "") -> dict:
-    """Return headers for OpenSubtitles API. If token given, use Bearer auth."""
+    """Return headers for OpenSubtitles API. Always needs Api-Key + optional Bearer."""
     h = {
+        "Api-Key": OPENSEARCH_API_KEY,
         "User-Agent": USER_AGENT,
         "Accept": "*/*",
         "Accept-Language": "en-US,en;q=0.5",
     }
     if token:
         h["Authorization"] = f"Bearer {token}"
-    else:
-        h["Api-Key"] = OPENSEARCH_API_KEY
     return h
 
 

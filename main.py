@@ -267,6 +267,7 @@ def opensubtitles_login(body: dict):
             "User-Agent": USER_AGENT,
             "Content-Type": "application/json",
             "Accept": "application/json",
+            "Api-Key": OPENSEARCH_API_KEY,
         }
         resp_data = _fetch_json(
             "https://api.opensubtitles.com/api/v1/login",
@@ -274,7 +275,13 @@ def opensubtitles_login(body: dict):
         )
         token = resp_data.get("token")
         if token:
-            return {"ok": True, "token": token, "user": resp_data.get("user", {})}
+            user = resp_data.get("user", {})
+            return {
+                "ok": True,
+                "token": token,
+                "user": user,
+                "allowed_downloads": user.get("allowed_downloads", 0),
+            }
         return {"error": resp_data.get("message", "Login failed")}
     except Exception as e:
         return {"error": f"OpenSubtitles login failed: {e}"}

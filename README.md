@@ -2,6 +2,8 @@
 
 FastAPI service that fetches and generates subtitles for YouTube videos — backend for SubtitleHub.
 
+[![CI](https://github.com/mzpakistani9-commits/subtitle-api/actions/workflows/ci.yml/badge.svg)](https://github.com/mzpakistani9-commits/subtitle-api/actions)
+
 ## Endpoints
 
 | Method | Path | Purpose |
@@ -39,3 +41,7 @@ uvicorn main:app --reload
 ## Deploy
 
 One-click on Render via `render.yaml` (uvicorn). If using OpenSubtitles, import `OPENSUBTITLES_API_KEY` as a **Render secret** — never commit it (this repo had one leaked in history; rotate it).
+
+---
+
+Built by **[Muhammad Zubair](https://github.com/mzpakistani9-commits)** — Clinical psychologist → AI builder. Part of an [AI-specialist portfolio](https://github.com/mzpakistani9-commits).
